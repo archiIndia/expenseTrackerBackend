@@ -1,6 +1,6 @@
-const DEFAULT_LIMIT = 3;
+const DEFAULT_LIMIT = 10;
 const ExpenseModel = require("../Models/expensemodel");
-
+const moment = require("moment");
 const calBalAndExpense = (inc, exp_list) => {
   let totalExpense = 0;
   for (let exp of exp_list) {
@@ -108,10 +108,83 @@ const updateExpense = async (req, res) => {
   }
 };
 
+const getTopExpenses = async (req, res) => {
+  try {
+    const userId = req.userInfo.userId;
+    const { is_monthly = false } = req.query;
+    const isMonthly = (is_monthly==="true" ? true : false);
+
+    // i need to create the match stage on the fly
+    // when "isMonthly" is true, then we also add "date" filter
+
+    const matchStage = {
+      status: "A",
+      userId: userId,
+    };
+    console.log("isMonthly",isMonthly)
+
+    // if is monthly is true then we execute the following block
+    if (isMonthly) {
+      const first_day_of_month = moment().startOf("month").toDate();
+      const last_day_of_month = moment().endOf("month").toDate();
+      // now we add a date filter in the "matchStage"
+      matchStage["date"] = {
+        // we only want data from start of this month
+        $gte: first_day_of_month,
+        // to end of this month
+        $lte: last_day_of_month,
+        // note: get only those record whose date is in between "first_day_of_month" and "last_day_of_month"
+      };
+    }
+    console.log("m stage", matchStage);
+    const result = await ExpenseModel.aggregate([
+      //stage 1
+      {
+        $match: matchStage,
+      },
+      {
+        $project: {
+          itemList: 1, //Only selecting ItemList
+        },
+      },
+      {
+        $unwind: {
+          path: "$itemList",
+        },
+      },
+      {
+        $group: {
+          _id: "$itemList.item_name",
+          total_expense: { $sum: "$itemList.amount" },
+          item_name: { $first: "$itemList.item_name" },
+        },
+      },
+      {
+        $project: {
+          _id: 0, // Unselect _id;
+        },
+      },
+      {
+        $sort: {
+          total_expense: -1,
+          item_name: 1,
+        },
+      },
+      {
+        $limit: 5,
+      },
+    ]);
+    res.status(200).json({ top_expenses: result });
+  } catch (error) {
+    res.status(400).json({ msg: error.message });
+  }
+};
+
 module.exports = {
   createExpense,
   findExpense,
   deleteExpense,
   getOneExpense,
   updateExpense,
+  getTopExpenses,
 };
